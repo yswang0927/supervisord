@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/mux"
+	"github.com/ochinchina/supervisord/config"
 	"github.com/ochinchina/supervisord/types"
 )
 
@@ -28,6 +30,9 @@ func (sr *SupervisorRestful) CreateProgramHandler() http.Handler {
 	sr.router.HandleFunc("/program/log/{name}/stdout", sr.ReadStdoutLog).Methods("GET")
 	sr.router.HandleFunc("/program/startPrograms", sr.StartPrograms).Methods("POST", "PUT")
 	sr.router.HandleFunc("/program/stopPrograms", sr.StopPrograms).Methods("POST", "PUT")
+	// 增加创建program，撤销进程
+	sr.router.HandleFunc("/program/create/{name}", sr.CreateProgram).Methods("POST", "PUT")
+	sr.router.HandleFunc("/program/revoke/{name}", sr.RevokeProgram).Methods("POST", "PUT")
 	return sr.router
 }
 
@@ -73,7 +78,7 @@ func (sr *SupervisorRestful) StartPrograms(w http.ResponseWriter, req *http.Requ
 	var b []byte
 	var err error
 
-	if b, err = ioutil.ReadAll(req.Body); err != nil {
+	if b, err = io.ReadAll(req.Body); err != nil {
 		w.WriteHeader(400)
 		w.Write([]byte("not a valid request"))
 		return
@@ -87,7 +92,10 @@ func (sr *SupervisorRestful) StartPrograms(w http.ResponseWriter, req *http.Requ
 		for _, program := range programs {
 			sr._startProgram(program)
 		}
-		w.Write([]byte("Success to start the programs"))
+		// TODO: 判断成功失败，返回增加失败的进程名称
+		//w.Write([]byte("Success to start the programs"))
+		r := map[string]bool{"success": true}
+		json.NewEncoder(w).Encode(&r)
 	}
 }
 
@@ -115,7 +123,7 @@ func (sr *SupervisorRestful) StopPrograms(w http.ResponseWriter, req *http.Reque
 	var programs []string
 	var b []byte
 	var err error
-	if b, err = ioutil.ReadAll(req.Body); err != nil {
+	if b, err = io.ReadAll(req.Body); err != nil {
 		w.WriteHeader(400)
 		w.Write([]byte("not a valid request"))
 		return
@@ -128,9 +136,65 @@ func (sr *SupervisorRestful) StopPrograms(w http.ResponseWriter, req *http.Reque
 		for _, program := range programs {
 			sr._stopProgram(program)
 		}
-		w.Write([]byte("Success to stop the programs"))
+		//w.Write([]byte("Success to stop the programs"))
+		r := map[string]bool{"success": true}
+		json.NewEncoder(w).Encode(&r)
+	}
+}
+
+func (sr *SupervisorRestful) _CreateProgram(config *config.Entry) (bool, error) {
+	createArgs := CreateProcessArgs{Config: config}
+	result := struct{ Success bool }{false}
+	err := sr.supervisor.CreateProcess(nil, &createArgs, &result)
+	return result.Success, err
+}
+
+// CreateProgram create program through the restful interface
+func (sr *SupervisorRestful) CreateProgram(w http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+
+	config := config.NewEntry("")
+	var b []byte
+	var err error
+	if b, err = io.ReadAll(req.Body); err != nil {
+		w.WriteHeader(400)
+		w.Write([]byte("not a valid request"))
+		return
 	}
 
+	if err := json.Unmarshal(b, &config); err != nil {
+		w.WriteHeader(400)
+		w.Write([]byte("not a valid request format"))
+	} else {
+		// TODO: 支持group
+		// TODO: 增加message字段提示失败信息
+		if !strings.HasPrefix(config.Name, "program:") {
+			config.Name = "program:" + config.Name
+		}
+		if _, err := sr._CreateProgram(config); err != nil {
+			r := map[string]bool{"success": false}
+			json.NewEncoder(w).Encode(&r)
+		} else {
+			r := map[string]bool{"success": true}
+			json.NewEncoder(w).Encode(&r)
+		}
+	}
+}
+
+func (sr *SupervisorRestful) _RevokeProgram(program string) (bool, error) {
+	createArgs := StartProcessArgs{Name: program, Wait: false}
+	result := struct{ Success bool }{false}
+	err := sr.supervisor.RevokeProcess(nil, &createArgs, &result)
+	return result.Success, err
+}
+
+// RevokeProgram revoke program through the restful interface
+func (sr *SupervisorRestful) RevokeProgram(w http.ResponseWriter, req *http.Request) {
+	defer req.Body.Close()
+	params := mux.Vars(req)
+	success, err := sr._RevokeProgram(params["name"])
+	r := map[string]bool{"success": err == nil && success}
+	json.NewEncoder(w).Encode(&r)
 }
 
 // ReadStdoutLog read the stdout of given program

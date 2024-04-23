@@ -229,6 +229,8 @@ func (p *XMLRPC) createRPCServer(s *Supervisor) *rpc.Server {
 	xmlrpcCodec.RegisterAlias("supervisor.stopProcess", "Supervisor.StopProcess")
 	xmlrpcCodec.RegisterAlias("supervisor.stopProcessGroup", "Supervisor.StopProcessGroup")
 	xmlrpcCodec.RegisterAlias("supervisor.stopAllProcesses", "Supervisor.StopAllProcesses")
+	xmlrpcCodec.RegisterAlias("supervisor.CreateProcess", "Supervisor.CreateProcess")
+	xmlrpcCodec.RegisterAlias("supervisor.RevokeProcess", "Supervisor.RevokeProcess")
 	xmlrpcCodec.RegisterAlias("supervisor.signalProcess", "Supervisor.SignalProcess")
 	xmlrpcCodec.RegisterAlias("supervisor.signalProcessGroup", "Supervisor.SignalProcessGroup")
 	xmlrpcCodec.RegisterAlias("supervisor.signalAllProcesses", "Supervisor.SignalAllProcesses")

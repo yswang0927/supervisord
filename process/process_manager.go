@@ -39,7 +39,7 @@ func (pm *Manager) CreateProcess(supervisorID string, config *config.Entry) *Pro
 // StartAutoStartPrograms starts all programs that set as should be autostarted
 func (pm *Manager) StartAutoStartPrograms() {
 	pm.ForEachProcess(func(proc *Process) {
-		if proc.isAutoStart() {
+		if proc.IsAutoStart() {
 			proc.Start(false)
 		}
 	})

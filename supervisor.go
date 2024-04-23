@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +35,11 @@ type Supervisor struct {
 	logger     logger.Logger    // logger manager
 	lock       sync.Mutex
 	restarting bool // if supervisor is in restarting state
+}
+
+// CreateProcessArgs arguments for creating a process
+type CreateProcessArgs struct {
+	Config *config.Entry // program config
 }
 
 // StartProcessArgs arguments for starting a process
@@ -354,6 +360,44 @@ func (s *Supervisor) StopAllProcesses(r *http.Request, args *struct {
 	return nil
 }
 
+// CreateProcess create a program
+func (s *Supervisor) CreateProcess(r *http.Request, args *CreateProcessArgs, reply *struct{ Success bool }) error {
+	// TODO: 需要检查config是否冲突
+	proc := s.procMgr.CreateProcess(s.GetSupervisorID(), args.Config)
+	if proc.IsAutoStart() {
+		proc.Start(false)
+	}
+
+	// oneshot进程不需要保存
+	if !proc.IsOneShot() {
+		// 保存到本地目录，以便重启后加载
+		args.Config.SaveToFile(filepath.Join(s.config.GetConfigDir(), proc.GetName()+".cfg"))
+	}
+	reply.Success = true
+	return nil
+}
+
+// RevokeProcess revoke a program
+func (s *Supervisor) RevokeProcess(r *http.Request, args *StartProcessArgs, reply *struct{ Success bool }) error {
+	procs := s.procMgr.FindMatch(args.Name)
+	if len(procs) <= 0 {
+		return fmt.Errorf("fail to find process %s", args.Name)
+	}
+
+	for _, proc := range procs {
+		// TODO: 需要删除本地配置文件，简化起见可以只支持CreateProcess添加的配置
+		os.Remove(filepath.Join(s.config.GetConfigDir(), proc.GetName()+".cfg"))
+		s.config.RemoveProgram(proc.GetName())
+		proc := s.procMgr.Remove(proc.GetName())
+		if proc != nil {
+			proc.Stop(false)
+		}
+	}
+
+	reply.Success = true
+	return nil
+}
+
 // SignalProcess send a signal to running program
 func (s *Supervisor) SignalProcess(r *http.Request, args *types.ProcessSignal, reply *struct{ Success bool }) error {
 	procs := s.procMgr.FindMatch(args.Name)
@@ -473,11 +517,26 @@ func (s *Supervisor) Reload(restart bool) (addedGroup []string, changedGroup []s
 // WaitForExit waits for supervisord to exit
 func (s *Supervisor) WaitForExit() {
 	for {
+		s.cleanOneShotPrograms()
 		if s.IsRestarting() {
 			s.procMgr.StopAllProcesses()
 			break
 		}
 		time.Sleep(10 * time.Second)
+	}
+}
+
+func (s *Supervisor) cleanOneShotPrograms() {
+	var programs []string
+	s.procMgr.ForEachProcess(func(proc *process.Process) {
+		if proc.IsOneShot() && proc.GetState() == process.Exited {
+			programs = append(programs, proc.GetName())
+		}
+	})
+
+	for _, p := range programs {
+		s.config.RemoveProgram(p)
+		s.procMgr.Remove(p)
 	}
 }
 

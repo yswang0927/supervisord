@@ -20,7 +20,7 @@ type Entry struct {
 	ConfigDir string
 	Group     string
 	Name      string
-	keyValues map[string]string
+	KeyValues map[string]string
 }
 
 // IsProgram returns true if this is a program section
@@ -81,13 +81,28 @@ func (c *Entry) setGroup(group string) {
 // String dumps configuration as a string
 func (c *Entry) String() string {
 	buf := bytes.NewBuffer(make([]byte, 0))
-	for k, v := range c.keyValues {
+	for k, v := range c.KeyValues {
 		fmt.Fprintf(buf, "%s=%s\n", k, v)
 	}
 	return buf.String()
 }
 
-// Config memory representation of supervisor configuration file
+// SaveToFile save program config
+func (c *Entry) SaveToFile(filename string) {
+	ini := ini.NewIni()
+	name := c.Name
+	if !strings.HasPrefix(name, "program:") {
+		name = "program:" + name
+	}
+	section := ini.NewSection(name)
+	for k, v := range c.KeyValues {
+		section.Add(k, v)
+	}
+
+	ini.WriteToFile(filename)
+}
+
+// Config memory reprentations of supervisor configuration file
 type Config struct {
 	configFile string
 	// mapping between the section name and configuration entry
@@ -117,13 +132,14 @@ func (c *Config) createEntry(name string, configDir string) *Entry {
 	return entry
 }
 
-//
 // Load the configuration and return loaded programs
 func (c *Config) Load() ([]string, error) {
 	myini := ini.NewIni()
 	c.ProgramGroup = NewProcessGroup()
 	log.WithFields(log.Fields{"file": c.configFile}).Info("load configuration from file")
 	myini.LoadFile(c.configFile)
+
+	os.Mkdir(c.GetConfigDir(), os.ModePerm)
 
 	includeFiles := c.getIncludeFiles(myini)
 	for _, f := range includeFiles {
@@ -164,6 +180,18 @@ func (c *Config) getIncludeFiles(cfg *ini.Ini) []string {
 			}
 		}
 	}
+
+	// 强制增加supervisord.d目录下的cfg配置
+	fileInfos, err := os.ReadDir(c.GetConfigDir())
+	if err == nil {
+		goPattern := toRegexp("*.cfg")
+		for _, fileInfo := range fileInfos {
+			if matched, err := regexp.MatchString(goPattern, fileInfo.Name()); matched && err == nil {
+				result = append(result, filepath.Join(c.GetConfigDir(), fileInfo.Name()))
+			}
+		}
+	}
+
 	return result
 }
 
@@ -204,6 +232,11 @@ func (c *Config) setProgramDefaultParams(cfg *ini.Ini) {
 // GetConfigFileDir returns directory of supervisord configuration file
 func (c *Config) GetConfigFileDir() string {
 	return filepath.Dir(c.configFile)
+}
+
+// GetConfigDir get the directory of supervisor configuration directory
+func (c *Config) GetConfigDir() string {
+	return filepath.Join(filepath.Dir(c.configFile), "supervisord.d/")
 }
 
 // convert supervisor file pattern to the go regrexp
@@ -301,7 +334,7 @@ func (c *Config) GetProgram(name string) *Entry {
 
 // GetBool gets value of key as bool
 func (c *Entry) GetBool(key string, defValue bool) bool {
-	value, ok := c.keyValues[key]
+	value, ok := c.KeyValues[key]
 
 	if ok {
 		b, err := strconv.ParseBool(value)
@@ -314,7 +347,7 @@ func (c *Entry) GetBool(key string, defValue bool) bool {
 
 // HasParameter checks if key (parameter) has value
 func (c *Entry) HasParameter(key string) bool {
-	_, ok := c.keyValues[key]
+	_, ok := c.KeyValues[key]
 	return ok
 }
 
@@ -328,7 +361,7 @@ func toInt(s string, factor int, defValue int) int {
 
 // GetInt gets value of the key as int
 func (c *Entry) GetInt(key string, defValue int) int {
-	value, ok := c.keyValues[key]
+	value, ok := c.KeyValues[key]
 
 	if ok {
 		return toInt(value, 1, defValue)
@@ -340,6 +373,10 @@ func parseEnv(s string) *map[string]string {
 	result := make(map[string]string)
 	start := 0
 	n := len(s)
+	if n < 3 {
+		return &result
+	}
+
 	var i int
 	for {
 		// find the '='
@@ -405,9 +442,10 @@ func parseEnvFiles(s string) *map[string]string {
 }
 
 // GetEnv returns slice of strings with keys separated from values by single "=". An environment string example:
-//  environment = A="env 1",B="this is a test"
+//
+//	environment = A="env 1",B="this is a test"
 func (c *Entry) GetEnv(key string) []string {
-	value, ok := c.keyValues[key]
+	value, ok := c.KeyValues[key]
 	result := make([]string, 0)
 
 	if ok {
@@ -426,11 +464,13 @@ func (c *Entry) GetEnv(key string) []string {
 }
 
 // GetEnvFromFiles returns slice of strings with keys separated from values by single "=". An envFile example:
-//  envFiles = global.env,prod.env
+//
+//	envFiles = global.env,prod.env
+//
 // cat global.env
 // varA=valueA
 func (c *Entry) GetEnvFromFiles(key string) []string {
-	value, ok := c.keyValues[key]
+	value, ok := c.KeyValues[key]
 	result := make([]string, 0)
 
 	if ok {
@@ -450,7 +490,7 @@ func (c *Entry) GetEnvFromFiles(key string) []string {
 
 // GetString returns value of the key as a string
 func (c *Entry) GetString(key string, defValue string) string {
-	s, ok := c.keyValues[key]
+	s, ok := c.KeyValues[key]
 
 	if ok {
 		env := NewStringExpression("here", c.ConfigDir)
@@ -469,7 +509,7 @@ func (c *Entry) GetString(key string, defValue string) string {
 
 // GetStringExpression returns value of key as a string and attempts to parse it with StringExpression
 func (c *Entry) GetStringExpression(key string, defValue string) string {
-	s, ok := c.keyValues[key]
+	s, ok := c.KeyValues[key]
 	if !ok || s == "" {
 		return ""
 	}
@@ -498,7 +538,7 @@ func (c *Entry) GetStringExpression(key string, defValue string) string {
 
 // GetStringArray gets string value and split it with "sep" to slice
 func (c *Entry) GetStringArray(key string, sep string) []string {
-	s, ok := c.keyValues[key]
+	s, ok := c.KeyValues[key]
 
 	if ok {
 		return strings.Split(s, sep)
@@ -512,9 +552,8 @@ func (c *Entry) GetStringArray(key string, sep string) []string {
 //	logSize=1GB
 //	logSize=1KB
 //	logSize=1024
-//
 func (c *Entry) GetBytes(key string, defValue int) int {
-	v, ok := c.keyValues[key]
+	v, ok := c.KeyValues[key]
 
 	if ok {
 		if len(v) > 2 {
@@ -535,7 +574,7 @@ func (c *Entry) GetBytes(key string, defValue int) int {
 func (c *Entry) parse(section *ini.Section) {
 	c.Name = section.Name
 	for _, key := range section.Keys() {
-		c.keyValues[key.Name()] = strings.TrimSpace(key.ValueWithDefault(""))
+		c.KeyValues[key.Name()] = strings.TrimSpace(key.ValueWithDefault(""))
 	}
 }
 
