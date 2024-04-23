@@ -1,5 +1,24 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/ochinchina/supervisord)](https://goreportcard.com/report/github.com/ochinchina/supervisord)
 
+# 如何自己编译打包
+```shell
+# 1. git clone https://github.com/yswang0927/supervisord.git
+# 2. cd supervisord/ 目录下解压 vendor.zip: unzip vendor.zip
+# 3. 执行 build.sh 进行编译打包
+
+# 编译所有平台包（linux, arm, windows）
+sh +x build.sh all
+
+# 只编译 linux x86_64 包
+sh +x build.sh amd64
+
+# 只编译 linux arm 包
+sh +x build.sh arm
+
+# 只编译 windows 包
+sh +x build.sh win
+```
+
 # Why this project?
 
 The python script supervisord is a powerful tool used by a lot of guys to manage the processes. I like  supervisord too.
